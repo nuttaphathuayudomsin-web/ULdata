@@ -255,15 +255,27 @@ st.divider()
 
 # ── Sidebar: API key + list summary ──────────────────────────────────────────
 with st.sidebar:
+    # Priority: Streamlit secrets → env var → manual input
+    _secret_key = ""
+    try:
+        _secret_key = st.secrets.get("ANTHROPIC_API_KEY", "")
+    except Exception:
+        pass
+    _auto_key = _secret_key or os.environ.get("ANTHROPIC_API_KEY", "")
+
     st.markdown("### 🔑 API Key")
-    api_key_input = st.text_input(
-        "Anthropic API Key",
-        value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        type="password",
-        placeholder="sk-ant-...",
-        help="Set ANTHROPIC_API_KEY env var or paste here",
-    )
-    api_key = api_key_input or os.environ.get("ANTHROPIC_API_KEY", "")
+    if _auto_key:
+        api_key = _auto_key
+        st.success("API key loaded ✓", icon="🔒")
+    else:
+        api_key = st.text_input(
+            "Anthropic API Key",
+            type="password",
+            placeholder="sk-ant-...",
+            help="Or add ANTHROPIC_API_KEY to Streamlit secrets",
+        )
+        if not api_key:
+            st.caption("💡 To avoid entering this every time, add it to **Streamlit secrets**: Settings → Secrets → `ANTHROPIC_API_KEY = 'sk-ant-...'`")
 
     st.divider()
     st.markdown(f"### 📂 Current List ({len(st.session_state.stock_list)} stocks)")
