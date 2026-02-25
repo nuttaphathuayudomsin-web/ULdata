@@ -1,31 +1,20 @@
 """
 DR Filing Autopilot — Streamlit App
-=====================================
-Install:
-    pip install streamlit anthropic openpyxl pandas
-
-Run:
-    streamlit run dr_filing_app.py
-
-Set Streamlit secret: ANTHROPIC_API_KEY = 'sk-ant-...'
+Install:  pip install streamlit anthropic openpyxl pandas
+Run:      streamlit run dr_filing_app.py
+Secret:   ANTHROPIC_API_KEY = 'sk-ant-...'
 """
 
-import io
-import json
-import re
-import os
+import io, json, re, os, time
 from datetime import datetime
-
 import anthropic
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 import pandas as pd
 import streamlit as st
 
-# ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="DR Filing Autopilot", page_icon="📋", layout="wide")
 
-# ── Excel headers — exactly matching template, then 2 extra cols at end ───────
 EXCEL_HEADERS = [
     "Run", "Company name", "Full company name", "Exchange name",
     "DR Ticker", "Units", "Ratio", "Address 1", "Address 2", "Tel", "Fax",
@@ -62,8 +51,8 @@ Required keys:
   "period": ""
 }
 
-ratio should be an integer: 100 if price < 100, 1000 if price 100–999, 10000 if price >= 1000.
-atoFee: 0.4 for all exchanges except Euronext Paris which is 0.5.
+ratio: integer — 100 if price<100, 1000 if price 100-999, 10000 if price>=1000
+atoFee: 0.4 for all exchanges; 0.5 for Euronext Paris only
 
 Thai exchange name mappings (use EXACTLY):
 NYSE → นิวยอร์ก (NYSE) | https://www.nyse.com/
@@ -78,7 +67,7 @@ LSE → ลอนดอน (London Stock Exchange) | https://www.londonstockexch
 
 def fetch_dr_data(query: str, api_key: str) -> dict:
     client = anthropic.Anthropic(api_key=api_key)
-    for attempt in range(3):
+    for attempt in range(4):
         try:
             response = client.messages.create(
                 model="claude-sonnet-4-20250514",
@@ -87,20 +76,28 @@ def fetch_dr_data(query: str, api_key: str) -> dict:
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": f"DR filing data for: {query}"}],
             )
-            # Extract text block
             text = next((b.text for b in response.content if b.type == "text"), "")
             text = re.sub(r"```json\s*|```\s*", "", text).strip()
             m = re.search(r'\{.*\}', text, re.DOTALL)
             if not m:
-                raise ValueError("No JSON found in response")
+                raise ValueError("No JSON in response — please try again.")
             return json.loads(m.group(0))
-        except Exception as e:
-            err = str(e)
-            if "rate_limit" in err and attempt < 2:
-                import time
-                wait = 30 * (attempt + 1)
-                st.warning(f"Rate limit — waiting {wait}s before retry {attempt+2}/3…")
+        except anthropic.RateLimitError:
+            wait = 30 * (attempt + 1)
+            if attempt < 3:
+                st.warning(f"Rate limit hit — waiting {wait}s before retry {attempt+2}/4…")
                 time.sleep(wait)
+            else:
+                raise
+        except anthropic.APIStatusError as e:
+            if e.status_code == 529:  # Overloaded
+                wait = 15 * (attempt + 1)
+                if attempt < 3:
+                    st.warning(f"Claude is busy — waiting {wait}s before retry {attempt+2}/4…")
+                    time.sleep(wait)
+                else:
+                    st.error("Claude is currently overloaded. Please wait a minute and try again.")
+                    raise
             else:
                 raise
 
@@ -118,11 +115,9 @@ def build_excel(stock_list: list) -> bytes:
     thin      = Side(style="thin", color="D0D0D0")
     border    = Border(left=thin, right=thin, top=thin, bottom=thin)
 
-    # Row 1: blank
     ws.append([""] * len(EXCEL_HEADERS))
     ws.row_dimensions[1].height = 6
 
-    # Row 2: headers
     ws.append(EXCEL_HEADERS)
     for ci in range(1, len(EXCEL_HEADERS) + 1):
         c = ws.cell(row=2, column=ci)
@@ -130,31 +125,16 @@ def build_excel(stock_list: list) -> bytes:
         c.alignment = center; c.border = border
     ws.row_dimensions[2].height = 30
 
-    # Data rows
     for rn, s in enumerate(stock_list, start=3):
         row = [
-            s.get("run", "N"),
-            s.get("companyName", ""),
-            s.get("fullCompanyName", ""),
-            s.get("exchangeName", ""),
-            s.get("drTicker", ""),
-            "•",
-            s.get("ratio", ""),
-            s.get("address1", ""),
-            s.get("address2", ""),
-            s.get("tel", ""),
-            s.get("fax", ""),
-            s.get("companyWebsite", ""),
-            s.get("marketNameWebsite", ""),
-            s.get("marketWebsiteShort", ""),
-            s.get("ulMarketWebsite", ""),
-            s.get("ulIrWebsite", ""),
-            s.get("ulIrNews", ""),
-            s.get("atoFee", 0.4),
-            "",
-            s.get("period", ""),
-            s.get("companyNameTitle", ""),
-            s.get("latestPrice", ""),
+            s.get("run", "N"), s.get("companyName", ""), s.get("fullCompanyName", ""),
+            s.get("exchangeName", ""), s.get("drTicker", ""), "•", s.get("ratio", ""),
+            s.get("address1", ""), s.get("address2", ""), s.get("tel", ""), s.get("fax", ""),
+            s.get("companyWebsite", ""), s.get("marketNameWebsite", ""),
+            s.get("marketWebsiteShort", ""), s.get("ulMarketWebsite", ""),
+            s.get("ulIrWebsite", ""), s.get("ulIrNews", ""),
+            s.get("atoFee", 0.4), "", s.get("period", ""),
+            s.get("companyNameTitle", ""), s.get("latestPrice", ""),
         ]
         ws.append(row)
         for ci in range(1, len(EXCEL_HEADERS) + 1):
@@ -163,8 +143,7 @@ def build_excel(stock_list: list) -> bytes:
             c.alignment = center if ci in (1, 5, 6, 7) else left
         ws.row_dimensions[rn].height = 20
 
-    col_widths = [6,35,45,32,12,6,8,35,30,18,14,30,45,30,50,45,45,8,4,10,35,28]
-    for i, w in enumerate(col_widths, 1):
+    for i, w in enumerate([6,35,45,32,12,6,8,35,30,18,14,30,45,30,50,45,45,8,4,10,35,28], 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
     ws.freeze_panes = "A3"
 
