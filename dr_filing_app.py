@@ -51,8 +51,10 @@ EXCEL_HEADERS = [
     "UL IR webiste",          # kept exactly as in template (typo intentional)
     "UL IR News",
     "ATO fee",
-    "",                        # blank column (col 18)
+    "",                        # blank column
     "Period",
+    "Company name (Title Case)",
+    "Latest Price",
 ]
 
 # ── Field definitions ─────────────────────────────────────────────────────────
@@ -82,68 +84,39 @@ FIELDS = [
     ("period",              "Period",                                           19),
 ]
 
-SYSTEM_PROMPT = """You are an expert financial data assistant helping fill a Thai Depositary Receipt (DR) filing template.
-When given a stock ticker or company name, use web search to find current data, then return a JSON object with EXACTLY these keys:
-
-{
-  "companyName": "OFFICIAL COMPANY NAME IN ALL CAPITAL LETTERS — must be 100% ALL CAPS, no lowercase at all, e.g. COINBASE GLOBAL INC.",
-  "fullCompanyName": "Same ALL CAPS name + short nickname in double-quoted parentheses, e.g. COINBASE GLOBAL INC. (\\"COINBASE\\") — this is Col1 + (\\"nickname\\")",
-  "companyNameTitle": "Same name in Title Case with first letter of each major word capitalised, e.g. Coinbase Global Inc.",
-  "latestPrice": "Most recent stock price with currency symbol and date, e.g. USD 205.42 (25 Feb 2026)",
-  "exchangeName": "Thai exchange name + English in parentheses — see mapping below",
-  "exchangeNameEn": "English exchange name only, e.g. NASDAQ",
-  "drTicker": "Stock ticker + 80, e.g. COIN80",
-  "ratio": "DR ratio as integer — 100, 1000, or 10000 depending on stock price (higher price → higher ratio)",
-  "address1": "First line of registered office address",
-  "address2": "Second line: city, state/province, country, ZIP",
-  "tel": "Main phone number with country code",
-  "fax": "Fax number if available, else empty string",
-  "companyWebsite": "Official company website URL",
-  "marketNameWebsite": "Thai exchange name with English + URL in parentheses",
-  "marketWebsiteShort": "Exchange homepage URL only",
-  "ulMarketWebsite": "Direct URL to the stock quote page on the exchange website",
-  "ulIrWebsite": "Investor Relations main page URL",
-  "ulIrNews": "IR News / Press Releases page URL",
-  "atoFee": "0.4 for most exchanges; 0.5 for Euronext Paris",
-  "period": "Leave blank — user will fill"
-}
-
-Return ONLY valid JSON. No markdown fences, no explanation, no extra text.
-
-Thai exchange name mappings (use EXACTLY):
-- NYSE → นิวยอร์ก (NYSE) | site: https://www.nyse.com/
-- NASDAQ → แนสแด็ก (NASDAQ) | site: https://www.nasdaq.com/
-- Tokyo Stock Exchange → โตเกียว (Tokyo Stock Exchange) | site: https://www.jpx.co.jp/english/
-- Hong Kong Stock Exchange (HKEX) → ฮ่องกง (The Stock Exchange of Hong Kong) เขตปกครองพิเศษฮ่องกง | site: https://www.hkex.com.hk/
-- Shanghai Stock Exchange → เซี่ยงไฮ้ (Shanghai Stock Exchange) ประเทศจีน | site: https://english.sse.com.cn/home/
-- Shenzhen Stock Exchange → เซิ้นเจิ้น (Shenzhen Stock Exchange) ประเทศจีน | site: https://www.szse.cn/English/index.html
-- Euronext Paris → ปารีส  (Euronext Paris) | site: https://www.euronext.com/en/markets/paris
-- London Stock Exchange → ลอนดอน (London Stock Exchange) | site: https://www.londonstockexchange.com/
-- NYSE Arca → นิวยอร์กอาร์ก้า (NYSE Arca) | site: https://www.nyse.com/markets/nyse-arca
-"""
+SYSTEM_PROMPT = """Return ONLY valid JSON, no markdown, no explanation.
+Keys required: companyName (ALL CAPS), fullCompanyName (ALL CAPS + ("NICKNAME")), companyNameTitle (Title Case), latestPrice (e.g. USD 205.42 as of 25 Feb 2026), exchangeName (Thai+English), exchangeNameEn, drTicker (ticker+80), ratio (100/1000/10000 int), address1, address2, tel, fax, companyWebsite, marketNameWebsite, marketWebsiteShort, ulMarketWebsite, ulIrWebsite, ulIrNews, atoFee (0.4 default; 0.5 Euronext), period (blank).
+Thai exchange names: NYSE->นิวยอร์ก (NYSE) nyse.com | NASDAQ->แนสแด็ก (NASDAQ) nasdaq.com | TSE->โตเกียว (Tokyo Stock Exchange) jpx.co.jp/english | HKEX->ฮ่องกง (The Stock Exchange of Hong Kong) เขตปกครองพิเศษฮ่องกง hkex.com.hk | SSE->เซี่ยงไฮ้ (Shanghai Stock Exchange) ประเทศจีน sse.com | SZSE->เซิ้นเจิ้น (Shenzhen Stock Exchange) ประเทศจีน szse.cn | Euronext->ปารีส (Euronext Paris) euronext.com | LSE->ลอนดอน (London Stock Exchange)"""
 
 
 # ── Helper: call Claude API ───────────────────────────────────────────────────
 def fetch_dr_data(query: str, api_key: str) -> dict:
+    import time
     client = anthropic.Anthropic(api_key=api_key)
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
-        max_tokens=1500,
-        tools=[{"type": "web_search_20250305", "name": "web_search"}],
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": f"Look up and fill the DR filing data for: {query}"}],
-    )
-    # Find the text block in response
-    text = ""
-    for block in response.content:
-        if block.type == "text":
-            text = block.text.strip()
-            break
-    # Strip markdown fences if present
-    text = re.sub(r"```json\s*", "", text)
-    text = re.sub(r"```\s*", "", text)
-    text = text.strip()
-    return json.loads(text)
+    for attempt in range(3):
+        try:
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=800,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": f"DR filing data for: {query}"}],
+            )
+            text = ""
+            for block in response.content:
+                if block.type == "text":
+                    text = block.text.strip()
+                    break
+            text = re.sub(r"```json\s*", "", text)
+            text = re.sub(r"```\s*", "", text)
+            return json.loads(text.strip())
+        except Exception as e:
+            if "rate_limit" in str(e) and attempt < 2:
+                wait = 30 * (attempt + 1)
+                st.warning(f"Rate limit hit — waiting {wait}s before retry {attempt+2}/3…")
+                time.sleep(wait)
+            else:
+                raise
 
 
 # ── Helper: build Excel file ──────────────────────────────────────────────────
@@ -182,6 +155,7 @@ def build_excel(stock_list: list[dict]) -> bytes:
             stock.get("run", "N"),
             stock.get("companyName", ""),
             stock.get("fullCompanyName", ""),
+            stock.get("companyNameTitle", ""),
             stock.get("exchangeName", ""),
             stock.get("drTicker", ""),
             "•",                                    # Units — bullet as in template
@@ -197,8 +171,10 @@ def build_excel(stock_list: list[dict]) -> bytes:
             stock.get("ulIrWebsite", ""),
             stock.get("ulIrNews", ""),
             stock.get("atoFee", 0.4),
-            "",                                     # blank col 18
+            "",                                     # blank col
             stock.get("period", ""),
+            stock.get("companyNameTitle", ""),
+            stock.get("latestPrice", ""),
         ]
         ws.append(row_data)
         for col_idx in range(1, len(EXCEL_HEADERS) + 1):
@@ -209,7 +185,7 @@ def build_excel(stock_list: list[dict]) -> bytes:
         ws.row_dimensions[row_num].height = 20
 
     # ── Column widths ──
-    col_widths = [6, 35, 45, 32, 12, 6, 8, 35, 30, 18, 14, 30, 45, 30, 50, 45, 45, 8, 4, 10]
+    col_widths = [6, 35, 45, 32, 12, 6, 8, 35, 30, 18, 14, 30, 45, 30, 50, 45, 45, 8, 4, 10, 35, 28]
     for i, w in enumerate(col_widths, start=1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
@@ -413,13 +389,25 @@ if st.session_state.stock_list:
     for i, s in enumerate(st.session_state.stock_list, 1):
         preview_data.append({
             "#": i,
-            "Company name": s.get("companyName", ""),
-            "Exchange": s.get("exchangeNameEn", s.get("exchangeName","")),
-            "DR Ticker": s.get("drTicker",""),
-            "Ratio": s.get("ratio",""),
-            "Latest Price": s.get("latestPrice",""),
-            "Run": s.get("run","N"),
-            "Period": s.get("period",""),
+            "Run": s.get("run", "N"),
+            "Company name (ALL CAPS)": s.get("companyName", ""),
+            "Full company name": s.get("fullCompanyName", ""),
+            "Company name (Title Case)": s.get("companyNameTitle", ""),
+            "Latest Price": s.get("latestPrice", ""),
+            "Exchange": s.get("exchangeNameEn", s.get("exchangeName", "")),
+            "DR Ticker": s.get("drTicker", ""),
+            "Ratio": s.get("ratio", ""),
+            "Address 1": s.get("address1", ""),
+            "Address 2": s.get("address2", ""),
+            "Tel": s.get("tel", ""),
+            "Company website": s.get("companyWebsite", ""),
+            "Market name website": s.get("marketNameWebsite", ""),
+            "Market website short": s.get("marketWebsiteShort", ""),
+            "UL Market website": s.get("ulMarketWebsite", ""),
+            "UL IR website": s.get("ulIrWebsite", ""),
+            "UL IR News": s.get("ulIrNews", ""),
+            "ATO fee": s.get("atoFee", 0.4),
+            "Period": s.get("period", ""),
         })
     st.dataframe(pd.DataFrame(preview_data), use_container_width=True, hide_index=True)
 
