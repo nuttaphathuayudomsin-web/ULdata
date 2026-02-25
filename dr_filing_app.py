@@ -18,8 +18,6 @@ import re
 import os
 from datetime import datetime
 
-import requests
-from requests.adapters import HTTPAdapter
 import yfinance as yf
 import openpyxl
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
@@ -96,28 +94,18 @@ def derive_nickname(long_name: str) -> str:
 # ── Yahoo Finance fetch ───────────────────────────────────────────────────────
 def fetch_yahoo_data(ticker_sym: str) -> dict:
     import time, random
-    # Use a browser-like session to avoid Yahoo Finance rate limiting
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Accept-Encoding": "gzip, deflate, br",
-        "Connection": "keep-alive",
-    })
-
     info = {}
     last_err = None
     for attempt in range(3):
         try:
-            tk = yf.Ticker(ticker_sym, session=session)
+            tk = yf.Ticker(ticker_sym)   # let yfinance use its own curl_cffi session
             info = tk.info
             if info.get("longName") or info.get("shortName"):
                 break
         except Exception as e:
             last_err = str(e)
             if "429" in str(e) or "rate" in str(e).lower() or "Too Many" in str(e):
-                wait = 5 * (attempt + 1)
+                wait = 8 * (attempt + 1)
                 st.warning(f"Yahoo Finance rate limit — waiting {wait}s and retrying ({attempt+1}/3)…")
                 time.sleep(wait)
             else:
@@ -126,7 +114,7 @@ def fetch_yahoo_data(ticker_sym: str) -> dict:
 
     if not info.get("longName") and not info.get("shortName"):
         hint = f" (last error: {last_err})" if last_err else ""
-        raise ValueError(f"Could not retrieve data for '{ticker_sym}'{hint}. Check the symbol at finance.yahoo.com and try again in a moment.")
+        raise ValueError(f"Could not retrieve data for '{ticker_sym}'{hint}. Check the symbol at finance.yahoo.com and try again.")
 
     # Price
     price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose") or 0

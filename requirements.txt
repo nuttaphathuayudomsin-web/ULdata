@@ -1,5 +1,6 @@
 streamlit
 yfinance
+curl_cffi
 openpyxl
 pandas
 anthropic
