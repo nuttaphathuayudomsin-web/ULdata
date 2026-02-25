@@ -1,6 +1,4 @@
 streamlit
-yfinance
-curl_cffi
+anthropic
 openpyxl
 pandas
-anthropic
