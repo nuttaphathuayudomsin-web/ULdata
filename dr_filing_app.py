@@ -259,6 +259,10 @@ if "stock_list" not in st.session_state:
     st.session_state.stock_list = []
 if "etf_list" not in st.session_state:
     st.session_state.etf_list = []
+if "last_query_time" not in st.session_state:
+    st.session_state.last_query_time = 0
+
+COOLDOWN_SECONDS = 30
 
 # ── Styles ────────────────────────────────────────────────────────────────────
 st.markdown("""
@@ -367,11 +371,20 @@ with tab_stock:
         elif not stock_query.strip():
             st.warning("Enter a ticker or company name.")
         else:
+            elapsed = time.time() - st.session_state.last_query_time
+            remaining = int(COOLDOWN_SECONDS - elapsed)
+            if remaining > 0:
+                countdown_placeholder = st.empty()
+                for i in range(remaining, 0, -1):
+                    countdown_placeholder.warning(f"⏳ Cooldown — please wait **{i}s** before next query to avoid rate limits.")
+                    time.sleep(1)
+                countdown_placeholder.empty()
             with st.spinner(f"Searching for **{stock_query}**…"):
                 try:
                     data = fetch_data(stock_query.strip(), api_key, STOCK_SYSTEM_PROMPT)
                     data.setdefault("run", "N")
                     st.session_state["stock_pending"] = data
+                    st.session_state.last_query_time = time.time()
                 except Exception as e:
                     st.error(f"Error: {e}")
 
@@ -474,11 +487,20 @@ with tab_etf:
         elif not etf_query.strip():
             st.warning("Enter an ETF ticker or name.")
         else:
+            elapsed = time.time() - st.session_state.last_query_time
+            remaining = int(COOLDOWN_SECONDS - elapsed)
+            if remaining > 0:
+                countdown_placeholder = st.empty()
+                for i in range(remaining, 0, -1):
+                    countdown_placeholder.warning(f"⏳ Cooldown — please wait **{i}s** before next query to avoid rate limits.")
+                    time.sleep(1)
+                countdown_placeholder.empty()
             with st.spinner(f"Searching for **{etf_query}**…"):
                 try:
                     data = fetch_data(etf_query.strip(), api_key, ETF_SYSTEM_PROMPT)
                     data.setdefault("run", "N")
                     st.session_state["etf_pending"] = data
+                    st.session_state.last_query_time = time.time()
                 except Exception as e:
                     st.error(f"Error: {e}")
 
